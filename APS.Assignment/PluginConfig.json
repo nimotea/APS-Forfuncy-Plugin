@@ -1,0 +1,15 @@
+{
+  "assembly": ["APS.Assignment.dll"],
+  "css": [],
+  "javascript": [],
+  "serverApiAssembly": [],
+  "image": "Resources/PluginLogo.png",
+  "description": "APS 资源分配 (Assignment)：提供基于 EFT 算法的多资源/机台自动分配与甘特图计算。",
+  "name": "APS 资源分配 (Assignment)",
+  "pluginType": "command",
+  "guid": "6f1b3c9e-4a8d-4f1b-9e2c-3d4e5f6a7b8c",
+  "version": "1.0.0.0",
+  "dependenceVersion": "11.0.103.0",
+  "bundleJavaScript": true,
+  "bundleCSS": true
+}
