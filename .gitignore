@@ -21,6 +21,7 @@ Thumbs.db
 
 # Forguncy specific (if any generated files)
 *.fgcc
+!Demo/*.fgcc
 
 # Documentation not for repo
 plans/
