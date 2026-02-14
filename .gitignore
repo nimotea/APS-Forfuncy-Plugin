@@ -1,0 +1,23 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.cache
+*.pdb
+[Bb]in/
+[Oo]bj/
+
+# IDE specific
+.vscode/
+.idea/
+.trae/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Forguncy specific (if any generated files)
+*.fgcc

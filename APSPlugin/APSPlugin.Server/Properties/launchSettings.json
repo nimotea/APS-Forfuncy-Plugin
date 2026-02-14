@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "APSPlugin.Server": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:55219;http://localhost:55220"
+    }
+  }
+}
