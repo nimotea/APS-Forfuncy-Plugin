@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputType>Library</OutputType>
+    <OutputPath>bin\</OutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Forguncy.Log.Abstractions" Exclude="runtime">
+      <HintPath>D:\ForguncyDesigner\11.0.4-stable\Forguncy 11\Website\bin\Forguncy.Log.Abstractions.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="GrapeCity.Forguncy.ServerApi">
+      <HintPath>D:\ForguncyDesigner\11.0.4-stable\Forguncy 11\Website\bin\GrapeCity.Forguncy.ServerApi.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
