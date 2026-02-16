@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "APSPlugin": {
+      "commandName": "Executable",
+      "executablePath": "D:\\ForguncyDesigner\\11.0.4-stable\\Forguncy 11\\Website\\designerBin\\Forguncy.exe"
+    }
+  }
+}
