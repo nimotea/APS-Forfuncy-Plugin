@@ -8,40 +8,42 @@
 
 ### 1.1 资源组产能表 (ResourceGroup_Master)
 **对应插件参数**：`ResourceData` (JSON)
-定义各工序/车间的标准产能。
+定义各工序/车间的**默认效率**。
+*   注意：`DailyCapacity` 字段在此模式下可能不再直接使用，而是由插件根据 `Resource_Master` 自动聚合。但在简化模式下仍可作为默认值。
 
 | 字段名 | 字段类型 | 说明 | 示例 | 插件映射 |
 | :--- | :--- | :--- | :--- | :--- |
 | ResourceGroupID | 文本 (PK) | 资源组唯一标识 | CNC_CENTER | `ResourceGroupID` |
 | GroupName | 文本 | 资源组名称 | 数控加工中心 | - |
-| DailyCapacity | 小数 | 标准日产能 (小时) | 24 (3台*8小时) | `DailyCapacity` |
 | Efficiency | 小数 | 综合效率 (0.0-1.0) | 0.9 | `Efficiency` |
 | Description | 文本 | 备注 | 包含3台五轴机床 | - |
 
-### 1.2 资源日历例外表 (Resource_Calendar) - New!
+### 1.2 资源设备表 (Resource_Master) - Updated!
+**对应插件参数**：`ResourceList` (JSON List) - **新增参数**
+定义每个资源组下的具体设备清单及其标准产能。
+
+| 字段名 | 字段类型 | 说明 | 示例 | 插件映射 |
+| :--- | :--- | :--- | :--- | :--- |
+| ResourceID | 文本 (PK) | 设备编号 | MC-001 | `ResourceID` |
+| ResourceName | 文本 | 设备名称 | 5轴加工中心-1号 | - |
+| ResourceGroupID | 文本 (FK) | 所属资源组 | CNC_CENTER | `ResourceGroupID` |
+| StandardCapacity | 小数 | **标准日产能** (小时) | 24 | `StandardCapacity` |
+| Status | 选项 | 设备状态 | 正常 / 停用 | - |
+
+### 1.3 资源日历例外表 (Resource_Calendar) - Refactored!
 **对应插件参数**：`CalendarExceptions` (JSON List)
-**作用**：用于覆盖 `ResourceGroup_Master` 中的默认产能。
-*   如果某天在本日历表中有记录，则以本表的 `OverrideCapacity` 为准。
-*   如果无记录，则使用默认的 `DailyCapacity * Efficiency`。
+**作用**：记录**单台设备**的特殊状态（检修、加班等）。
+*   插件会自动聚合：`某日资源组总产能 = Σ(单台设备当日产能)`。
+*   如果设备在本日历表无记录，则取 `Resource_Master.StandardCapacity`。
 
 | 字段名 | 字段类型 | 说明 | 示例 | 插件映射 |
 | :--- | :--- | :--- | :--- | :--- |
 | CalendarID | 自动编号 | 主键 | 1 | - |
-| ResourceGroupID | 文本 (FK) | 资源组 | CNC_CENTER | `ResourceGroupID` |
+| ResourceID | 文本 (FK) | **设备编号** | MC-001 | `ResourceID` |
 | ExceptionDate | 日期 | **例外日期** | 2026-02-18 | `Date` |
-| ExceptionType | 选项 | 类型 | 检修 / 加班 / 节假日 | - |
-| OverrideCapacity | 小数 | **当日实际产能** (小时) | 0 (检修) 或 30 (加班) | `OverrideCapacity` |
-| Comments | 文本 | 说明 | 年度大修 | - |
-
-### 1.3 资源设备表 (Resource_Master)
-**作用**：用于记录资源组下的具体设备明细（L1.5 阶段主要用于展示，排程计算以资源组为准）。
-
-| 字段名 | 字段类型 | 说明 | 示例 |
-| :--- | :--- | :--- | :--- |
-| ResourceID | 文本 (PK) | 设备编号 | MC-001 |
-| ResourceName | 文本 | 设备名称 | 5轴加工中心-1号 |
-| ResourceGroupID | 文本 (FK) | 所属资源组 | CNC_CENTER |
-| Status | 选项 | 设备状态 | 正常 / 维修中 |
+| ExceptionType | 选项 | 类型 | 检修 / 加班 | `Type` |
+| OverrideCapacity | 小数 | **当日实际产能** | 0 (检修) | `Value` |
+| Comments | 文本 | 说明 | 故障维修 | - |
 
 ---
 
