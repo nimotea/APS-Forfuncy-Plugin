@@ -18,7 +18,22 @@
 | Efficiency | 小数 | 综合效率 (0.0-1.0) | 0.9 | `Efficiency` |
 | Description | 文本 | 备注 | 包含3台五轴机床 | - |
 
-### 1.2 资源设备表 (Resource_Master)
+### 1.2 资源日历例外表 (Resource_Calendar) - New!
+**对应插件参数**：`CalendarExceptions` (JSON List)
+**作用**：用于覆盖 `ResourceGroup_Master` 中的默认产能。
+*   如果某天在本日历表中有记录，则以本表的 `OverrideCapacity` 为准。
+*   如果无记录，则使用默认的 `DailyCapacity * Efficiency`。
+
+| 字段名 | 字段类型 | 说明 | 示例 | 插件映射 |
+| :--- | :--- | :--- | :--- | :--- |
+| CalendarID | 自动编号 | 主键 | 1 | - |
+| ResourceGroupID | 文本 (FK) | 资源组 | CNC_CENTER | `ResourceGroupID` |
+| ExceptionDate | 日期 | **例外日期** | 2026-02-18 | `Date` |
+| ExceptionType | 选项 | 类型 | 检修 / 加班 / 节假日 | - |
+| OverrideCapacity | 小数 | **当日实际产能** (小时) | 0 (检修) 或 30 (加班) | `OverrideCapacity` |
+| Comments | 文本 | 说明 | 年度大修 | - |
+
+### 1.3 资源设备表 (Resource_Master)
 **作用**：用于记录资源组下的具体设备明细（L1.5 阶段主要用于展示，排程计算以资源组为准）。
 
 | 字段名 | 字段类型 | 说明 | 示例 |
