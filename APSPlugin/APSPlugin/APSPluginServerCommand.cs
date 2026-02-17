@@ -58,8 +58,21 @@ namespace APSPlugin
     public class ResourceGroup
     {
         public string ResourceGroupID { get; set; }
-        public double DailyCapacity { get; set; } // 每日总工时 (如 8 小时)
         public double Efficiency { get; set; } = 1.0; // 效率 (0-1)
+    }
+
+    public class ResourceItem
+    {
+        public string ResourceID { get; set; }
+        public string ResourceGroupID { get; set; }
+        public double StandardCapacity { get; set; }
+    }
+
+    public class CalendarException
+    {
+        public string ResourceID { get; set; }
+        public DateTime ExceptionDate { get; set; }
+        public double ChangeValue { get; set; } // 产能变更值 (例如 -8 表示停机，+2 表示加班)
     }
 
     public class WorkOrder
@@ -92,8 +105,18 @@ namespace APSPlugin
 
         [FormulaProperty]
         [DisplayName("资源组配置")]
-        [Description("定义资源组及其产能。JSON 格式：[{ \"ResourceGroupID\": \"CNC\", \"DailyCapacity\": 8, \"Efficiency\": 0.9 }]")]
+        [Description("定义资源组及其效率。JSON 格式：[{ \"ResourceGroupID\": \"CNC\", \"Efficiency\": 0.9 }]")]
         public object ResourceData { get; set; }
+
+        [FormulaProperty]
+        [DisplayName("资源明细列表")]
+        [Description("包含每个设备的标准产能。JSON: [{ \"ResourceID\": \"M1\", \"ResourceGroupID\": \"G1\", \"StandardCapacity\": 8 }]")]
+        public object ResourceList { get; set; }
+
+        [FormulaProperty]
+        [DisplayName("日历例外列表")]
+        [Description("包含设备的特殊日历调整。JSON: [{ \"ResourceID\": \"M1\", \"ExceptionDate\": \"2023-01-01\", \"ChangeValue\": -8 }]")]
+        public object CalendarExceptions { get; set; }
 
         [FormulaProperty]
         [DisplayName("排产开始日期")]
@@ -162,17 +185,25 @@ namespace APSPlugin
                     return new ExecuteResult { Message = "工单集合不能为空。" };
                 }
 
-                // 2. 获取资源数据
+                // 2. 获取资源组配置
                 var rawResourceData = await dataContext.EvaluateFormulaAsync(ResourceData);
-                List<ResourceGroup> resources = new List<ResourceGroup>();
-                if (rawResourceData != null)
-                {
-                    string resJson = rawResourceData is string s ? s : JsonConvert.SerializeObject(rawResourceData);
-                    resources = JsonConvert.DeserializeObject<List<ResourceGroup>>(resJson) ?? new List<ResourceGroup>();
-                }
-                var resourceDict = resources.ToDictionary(r => r.ResourceGroupID, r => r);
+                var resources = Deserialize<List<ResourceGroup>>(rawResourceData) ?? new List<ResourceGroup>();
+                var groupDict = resources.ToDictionary(r => r.ResourceGroupID, r => r);
 
-                // 3. 获取开始日期
+                // 3. 获取资源明细 (新)
+                var rawResourceList = await dataContext.EvaluateFormulaAsync(ResourceList);
+                var resourceItems = Deserialize<List<ResourceItem>>(rawResourceList) ?? new List<ResourceItem>();
+                var resourcesByGroup = resourceItems.GroupBy(r => r.ResourceGroupID).ToDictionary(g => g.Key, g => g.ToList());
+
+                // 4. 获取日历例外 (新)
+                var rawExceptions = await dataContext.EvaluateFormulaAsync(CalendarExceptions);
+                var exceptionItems = Deserialize<List<CalendarException>>(rawExceptions) ?? new List<CalendarException>();
+                // ResourceID -> Date -> TotalChange
+                var exceptionsMap = exceptionItems
+                    .GroupBy(e => e.ResourceID)
+                    .ToDictionary(g => g.Key, g => g.GroupBy(e => e.ExceptionDate.Date).ToDictionary(d => d.Key, d => d.Sum(x => x.ChangeValue)));
+
+                // 5. 获取开始日期
                 var rawStartDate = await dataContext.EvaluateFormulaAsync(StartDate);
                 DateTime planStartDate = DateTime.Today;
                 if (rawStartDate != null)
@@ -181,7 +212,7 @@ namespace APSPlugin
                     else if (DateTime.TryParse(rawStartDate.ToString(), out DateTime dtParsed)) planStartDate = dtParsed;
                 }
 
-                // 4. 准备字段映射字典
+                // 6. 准备字段映射字典
                 var mappingDict = new Dictionary<InternalField, string>();
                 if (FieldMappings != null)
                 {
@@ -203,7 +234,7 @@ namespace APSPlugin
                 if (!mappingDict.ContainsKey(InternalField.ArrivalTime)) mappingDict[InternalField.ArrivalTime] = "到达时间";
                 if (!mappingDict.ContainsKey(InternalField.ResourceGroupID)) mappingDict[InternalField.ResourceGroupID] = "资源组ID";
 
-                // 5. 提取数据
+                // 7. 提取数据
                 List<JObject> jOrders;
                 if (rawWorkOrders is string jsonStr)
                 {
@@ -253,14 +284,14 @@ namespace APSPlugin
                     orderPairs.Add((order, resultJo));
                 }
 
-                // 6. 执行规则校验
+                // 8. 执行规则校验
                 string validationError = ValidateData(orderPairs.Select(p => p.Order).ToList(), Rule);
                 if (!string.IsNullOrEmpty(validationError))
                 {
                     return new ExecuteResult { Message = validationError };
                 }
 
-                // 7. 执行排序逻辑 (Step 1: Sorting)
+                // 9. 执行排序逻辑 (Step 1: Sorting)
                 IEnumerable<(WorkOrder Order, JObject Result)> sortedPairs;
                 switch (Rule)
                 {
@@ -289,11 +320,37 @@ namespace APSPlugin
                         break;
                 }
 
-                // 8. 执行 RCCP 排程 (Step 2: Filling Buckets)
+                // 10. 执行 RCCP 排程 (Step 2: Filling Buckets)
                 // 资源桶：ResourceID -> Date -> UsedHours
                 var resourceBuckets = new Dictionary<string, Dictionary<DateTime, double>>();
                 var resultList = new List<JObject>();
                 int sequence = 1;
+
+                // 产能计算辅助函数
+                double GetDailyCapacity(string groupId, DateTime date)
+                {
+                    // 如果资源组未定义，返回 0
+                    if (!groupDict.ContainsKey(groupId)) return 0;
+                    var group = groupDict[groupId];
+                    
+                    // 如果该组没有资源明细，返回 0 (或者视为无限产能？不，应视为 0)
+                    if (!resourcesByGroup.ContainsKey(groupId)) return 0;
+
+                    double totalCapacity = 0;
+                    foreach (var res in resourcesByGroup[groupId])
+                    {
+                        double cap = res.StandardCapacity;
+                        // 应用例外
+                        if (exceptionsMap.TryGetValue(res.ResourceID, out var dateMap) && dateMap.TryGetValue(date.Date, out double change))
+                        {
+                            cap += change;
+                        }
+                        if (cap < 0) cap = 0; // 单设备产能不为负
+                        totalCapacity += cap;
+                    }
+
+                    return totalCapacity * group.Efficiency;
+                }
 
                 foreach (var pair in sortedPairs)
                 {
@@ -302,20 +359,10 @@ namespace APSPlugin
                     
                     jo[nameof(WorkOrder.SequenceNo)] = sequence++;
 
-                    // 如果未指定资源组或资源组不存在，无法排程，标记为异常
-                    if (string.IsNullOrEmpty(order.ResourceGroupID) || !resourceDict.ContainsKey(order.ResourceGroupID))
+                    // 如果未指定资源组或资源组不存在，无法排程
+                    if (string.IsNullOrEmpty(order.ResourceGroupID) || !groupDict.ContainsKey(order.ResourceGroupID))
                     {
                         jo[nameof(WorkOrder.CapacityStatus)] = "Unknown Resource";
-                        resultList.Add(jo);
-                        continue;
-                    }
-
-                    var resource = resourceDict[order.ResourceGroupID];
-                    double realCapacity = resource.DailyCapacity * resource.Efficiency;
-                    
-                    if (realCapacity <= 0)
-                    {
-                        jo[nameof(WorkOrder.CapacityStatus)] = "Zero Capacity";
                         resultList.Add(jo);
                         continue;
                     }
@@ -329,6 +376,16 @@ namespace APSPlugin
                     // 防止死循环，设定一个最大搜索天数（例如 365 天）
                     for (int i = 0; i < 365; i++)
                     {
+                        // 获取当天的实际产能 (动态计算)
+                        double dailyCapacity = GetDailyCapacity(order.ResourceGroupID, searchDate);
+
+                        if (dailyCapacity <= 0)
+                        {
+                            // 当天无产能（休息日或停机），直接跳过
+                            searchDate = searchDate.AddDays(1);
+                            continue;
+                        }
+
                         if (!resourceBuckets.ContainsKey(order.ResourceGroupID))
                         {
                             resourceBuckets[order.ResourceGroupID] = new Dictionary<DateTime, double>();
@@ -342,28 +399,22 @@ namespace APSPlugin
 
                         double currentLoad = buckets[searchDate];
                         
-                        // 策略：如果当天剩余产能足够放下整个工单（或工单允许跨天但简化为只要有空闲就排入主要部分）
-                        // L1.5 简化策略：只要当天还没满（Load < Capacity），就尝试放入。
-                        // 如果工单工时 > 当天剩余工时，这里我们简单地将工单“归属”于这一天，并标记该天过载（Overload），或者顺延到哪一天能完全放下？
-                        // 根据文档：“当某日产能已满，排序靠后的工单应自动标记为‘建议顺延至次日’”
-                        // 这意味着：必须找到一天，其 (CurrentLoad + OrderTime) <= Capacity。
-                        // 但是，如果 OrderTime > Capacity，则永远无法满足。
-                        // 修正策略：如果 OrderTime > Capacity，则找一个由空闲的日期放入，并标记过载。
-                        // 正常情况：找一个能放下的日期。
-
-                        if (currentLoad + order.ProcessingTime <= realCapacity)
+                        // 策略：L1.5 简化策略 - 只要当天还没满，就尝试放入。
+                        // 如果工单很大，且当天是空的，允许放入（标记 Overloaded）。
+                        // 如果当天已经有负载，且剩余空间不够，顺延。
+                        
+                        if (currentLoad + order.ProcessingTime <= dailyCapacity)
                         {
-                            // Found a valid slot
+                            // 完美放入
                             buckets[searchDate] += order.ProcessingTime;
                             order.ScheduledDate = searchDate;
                             order.CapacityStatus = "Normal";
                             scheduled = true;
                             break;
                         }
-                        else if (currentLoad == 0 && order.ProcessingTime > realCapacity)
+                        else if (currentLoad == 0 && order.ProcessingTime > dailyCapacity)
                         {
-                            // 特殊情况：工单本身就比单日产能大，且当天是空的。
-                            // 强制放入，并标记过载。
+                            // 工单本身超大，不得不放
                             buckets[searchDate] += order.ProcessingTime;
                             order.ScheduledDate = searchDate;
                             order.CapacityStatus = "Overloaded (Job too large)";
@@ -386,13 +437,6 @@ namespace APSPlugin
                         {
                             order.IsOverdue = true;
                             order.DelayDays = (order.ScheduledDate.Value - order.DueDate).TotalDays;
-                            // 如果已经是 Overloaded，保留 Overloaded 状态，或者叠加？
-                            // 文档要求：CapacityStatus（产能状态：正常/过载/结余）。
-                            // 这里我们用 CapacityStatus 描述当天的负荷情况。
-                            // 如果当天最终 Load > Capacity，则为 Overloaded。
-                            // 但由于我们是逐个排的，上面的逻辑保证了只要能放下就不超，除非单工单超限。
-                            // 所以这里的 CapacityStatus 主要反映单工单超限。
-                            // 而“结余”很难在单工单上体现，除非是指该工单排进去后，当天还有剩？
                         }
                         else
                         {
@@ -420,6 +464,13 @@ namespace APSPlugin
                     Message = $"排程排序执行失败: {ex.Message}"
                 };
             }
+        }
+
+        private T Deserialize<T>(object input)
+        {
+            if (input == null) return default(T);
+            string json = input is string s ? s : JsonConvert.SerializeObject(input);
+            return JsonConvert.DeserializeObject<T>(json);
         }
 
         private void UpdateResultField(JObject jo, string externalName, string internalName)
