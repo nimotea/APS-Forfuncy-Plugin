@@ -37,7 +37,29 @@ namespace APSPlugin
         [Description("到达时间 (ArrivalTime)")]
         ArrivalTime,
         [Description("资源组 (ResourceGroupID)")]
-        ResourceGroupID
+        ResourceGroupID,
+        [Description("工序序号 (SequenceNo)")]
+        SequenceNo
+    }
+
+    public enum ResourceField
+    {
+        [Description("设备编号 (ResourceID)")]
+        ResourceID,
+        [Description("资源组编号 (ResourceGroupID)")]
+        ResourceGroupID,
+        [Description("标准产能 (StandardCapacity)")]
+        StandardCapacity
+    }
+
+    public enum CalendarField
+    {
+        [Description("设备编号 (ResourceID)")]
+        ResourceID,
+        [Description("例外日期 (ExceptionDate)")]
+        ExceptionDate,
+        [Description("产能变更 (ChangeValue)")]
+        ChangeValue
     }
 
     public class FieldMappingItem : ObjectPropertyBase
@@ -55,23 +77,66 @@ namespace APSPlugin
         }
     }
 
+    public class ResourceMappingItem : ObjectPropertyBase
+    {
+        [DisplayName("资源字段")]
+        public ResourceField ResourceField { get; set; }
+
+        [FormulaProperty]
+        [DisplayName("数据列名")]
+        public object ColumnName { get; set; }
+
+        public override string ToString()
+        {
+            return $"{ResourceField} -> {ColumnName}";
+        }
+    }
+
+    public class CalendarMappingItem : ObjectPropertyBase
+    {
+        [DisplayName("日历字段")]
+        public CalendarField CalendarField { get; set; }
+
+        [FormulaProperty]
+        [DisplayName("数据列名")]
+        public object ColumnName { get; set; }
+
+        public override string ToString()
+        {
+            return $"{CalendarField} -> {ColumnName}";
+        }
+    }
+
     public class ResourceGroup
     {
+        [JsonProperty("ResourceGroupID")]
         public string ResourceGroupID { get; set; }
+
+        [JsonProperty("Efficiency")]
         public double Efficiency { get; set; } = 1.0; // 效率 (0-1)
     }
 
     public class ResourceItem
     {
+        [JsonProperty("ResourceID")]
         public string ResourceID { get; set; }
+
+        [JsonProperty("ResourceGroupID")]
         public string ResourceGroupID { get; set; }
+
+        [JsonProperty("StandardCapacity")]
         public double StandardCapacity { get; set; }
     }
 
     public class CalendarException
     {
+        [JsonProperty("ResourceID")]
         public string ResourceID { get; set; }
+
+        [JsonProperty("ExceptionDate")]
         public DateTime ExceptionDate { get; set; }
+
+        [JsonProperty("ChangeValue")]
         public double ChangeValue { get; set; } // 产能变更值 (例如 -8 表示停机，+2 表示加班)
     }
 
@@ -109,14 +174,34 @@ namespace APSPlugin
         public object ResourceData { get; set; }
 
         [FormulaProperty]
-        [DisplayName("资源明细列表")]
-        [Description("包含每个设备的标准产能。JSON: [{ \"ResourceID\": \"M1\", \"ResourceGroupID\": \"G1\", \"StandardCapacity\": 8 }]")]
-        public object ResourceList { get; set; }
+        [DisplayName("日历例外")]
+        [Description("支持 JSON 数组字符串或表格数据。请配合下方的字段映射使用。")]
+        public object CalendarExceptions { get; set; }
+
+        [ListProperty]
+        [DisplayName("日历字段映射")]
+        [Description("配置日历例外数据的列名映射。")]
+        public List<CalendarMappingItem> CalendarMappings { get; set; } = new List<CalendarMappingItem>
+        {
+            new CalendarMappingItem { CalendarField = CalendarField.ResourceID, ColumnName = "设备编号" },
+            new CalendarMappingItem { CalendarField = CalendarField.ExceptionDate, ColumnName = "例外日期" },
+            new CalendarMappingItem { CalendarField = CalendarField.ChangeValue, ColumnName = "产能变更" }
+        };
 
         [FormulaProperty]
-        [DisplayName("日历例外列表")]
-        [Description("包含设备的特殊日历调整。JSON: [{ \"ResourceID\": \"M1\", \"ExceptionDate\": \"2023-01-01\", \"ChangeValue\": -8 }]")]
-        public object CalendarExceptions { get; set; }
+        [DisplayName("资源明细")]
+        [Description("支持 JSON 数组字符串或表格数据。请配合下方的字段映射使用。")]
+        public object ResourceList { get; set; }
+
+        [ListProperty]
+        [DisplayName("资源字段映射")]
+        [Description("配置资源明细数据的列名映射。")]
+        public List<ResourceMappingItem> ResourceMappings { get; set; } = new List<ResourceMappingItem>
+        {
+            new ResourceMappingItem { ResourceField = ResourceField.ResourceID, ColumnName = "设备编号" },
+            new ResourceMappingItem { ResourceField = ResourceField.ResourceGroupID, ColumnName = "资源组编号" },
+            new ResourceMappingItem { ResourceField = ResourceField.StandardCapacity, ColumnName = "标准产能" }
+        };
 
         [FormulaProperty]
         [DisplayName("排产开始日期")]
@@ -136,6 +221,8 @@ namespace APSPlugin
         [DisplayName("将结果保存到变量")]
         [Description("排程后的工单集合将存储在此变量中。包含建议日期与负荷状态。")]
         public string ResultTo { get; set; } = "ScheduledWorkOrders";
+
+
 
         public IEnumerable<GenerateParam> GetGenerateParams()
         {
@@ -184,20 +271,124 @@ namespace APSPlugin
                 {
                     return new ExecuteResult { Message = "工单集合不能为空。" };
                 }
-
+                
                 // 2. 获取资源组配置
                 var rawResourceData = await dataContext.EvaluateFormulaAsync(ResourceData);
                 var resources = Deserialize<List<ResourceGroup>>(rawResourceData) ?? new List<ResourceGroup>();
                 var groupDict = resources.ToDictionary(r => r.ResourceGroupID, r => r);
 
-                // 3. 获取资源明细 (新)
+                // 3. 获取资源明细 (JSON 或 表格)
+                List<ResourceItem> resourceItems = new List<ResourceItem>();
+                int skippedResources = 0;
                 var rawResourceList = await dataContext.EvaluateFormulaAsync(ResourceList);
-                var resourceItems = Deserialize<List<ResourceItem>>(rawResourceList) ?? new List<ResourceItem>();
+                if (rawResourceList != null)
+                {
+                    List<JObject> jItems = null;
+                    if (rawResourceList is string resourceJsonStr)
+                    {
+                        jItems = JsonConvert.DeserializeObject<List<JObject>>(resourceJsonStr);
+                    }
+                    else
+                    {
+                        var json = JsonConvert.SerializeObject(rawResourceList);
+                        jItems = JsonConvert.DeserializeObject<List<JObject>>(json);
+                    }
+
+                    if (jItems != null)
+                    {
+                        var resMap = new Dictionary<ResourceField, string>();
+                        if (ResourceMappings != null)
+                        {
+                            foreach (var m in ResourceMappings)
+                            {
+                                var col = (await dataContext.EvaluateFormulaAsync(m.ColumnName))?.ToString();
+                                if (!string.IsNullOrEmpty(col)) resMap[m.ResourceField] = col;
+                            }
+                        }
+                        foreach (var row in jItems)
+                        {
+                            var item = new ResourceItem();
+                            if (resMap.ContainsKey(ResourceField.ResourceID)) 
+                                item.ResourceID = row[resMap[ResourceField.ResourceID]]?.ToString();
+                            
+                            if (resMap.ContainsKey(ResourceField.ResourceGroupID)) 
+                                item.ResourceGroupID = row[resMap[ResourceField.ResourceGroupID]]?.ToString();
+                            
+                            if (resMap.ContainsKey(ResourceField.StandardCapacity))
+                            {
+                                var val = row[resMap[ResourceField.StandardCapacity]];
+                                item.StandardCapacity = ParseDouble(val, 0);
+                            }
+                            
+                            // 关键修复：忽略没有资源组ID或资源ID的无效数据
+                            if (!string.IsNullOrEmpty(item.ResourceGroupID) && !string.IsNullOrEmpty(item.ResourceID))
+                            {
+                                resourceItems.Add(item);
+                            }
+                            else
+                            {
+                                skippedResources++;
+                            }
+                        }
+                    }
+                }
                 var resourcesByGroup = resourceItems.GroupBy(r => r.ResourceGroupID).ToDictionary(g => g.Key, g => g.ToList());
 
-                // 4. 获取日历例外 (新)
+                // 4. 获取日历例外 (JSON 或 表格)
+                List<CalendarException> exceptionItems = new List<CalendarException>();
+                int skippedExceptions = 0;
                 var rawExceptions = await dataContext.EvaluateFormulaAsync(CalendarExceptions);
-                var exceptionItems = Deserialize<List<CalendarException>>(rawExceptions) ?? new List<CalendarException>();
+                if (rawExceptions != null)
+                {
+                    List<JObject> jItems = null;
+                    if (rawExceptions is string calendarJsonStr)
+                    {
+                        jItems = JsonConvert.DeserializeObject<List<JObject>>(calendarJsonStr);
+                    }
+                    else
+                    {
+                        var json = JsonConvert.SerializeObject(rawExceptions);
+                        jItems = JsonConvert.DeserializeObject<List<JObject>>(json);
+                    }
+
+                    if (jItems != null)
+                    {
+                        var calMap = new Dictionary<CalendarField, string>();
+                        if (CalendarMappings != null)
+                        {
+                            foreach (var m in CalendarMappings)
+                            {
+                                var col = (await dataContext.EvaluateFormulaAsync(m.ColumnName))?.ToString();
+                                if (!string.IsNullOrEmpty(col)) calMap[m.CalendarField] = col;
+                            }
+                        }
+                        foreach (var row in jItems)
+                        {
+                            var item = new CalendarException();
+                            if (calMap.ContainsKey(CalendarField.ResourceID)) 
+                                item.ResourceID = row[calMap[CalendarField.ResourceID]]?.ToString();
+                            
+                            if (calMap.ContainsKey(CalendarField.ExceptionDate)) 
+                                item.ExceptionDate = ParseDateTime(row[calMap[CalendarField.ExceptionDate]], DateTime.MinValue);
+                            
+                            if (calMap.ContainsKey(CalendarField.ChangeValue))
+                            {
+                                var val = row[calMap[CalendarField.ChangeValue]];
+                                item.ChangeValue = ParseDouble(val, 0);
+                            }
+                            
+                            // 关键修复：忽略没有资源ID的无效数据
+                            if (!string.IsNullOrEmpty(item.ResourceID))
+                            {
+                                exceptionItems.Add(item);
+                            }
+                            else
+                            {
+                                skippedExceptions++;
+                            }
+                        }
+                    }
+                }
                 // ResourceID -> Date -> TotalChange
                 var exceptionsMap = exceptionItems
                     .GroupBy(e => e.ResourceID)
@@ -329,12 +520,15 @@ namespace APSPlugin
                 // 产能计算辅助函数
                 double GetDailyCapacity(string groupId, DateTime date)
                 {
-                    // 如果资源组未定义，返回 0
-                    if (!groupDict.ContainsKey(groupId)) return 0;
-                    var group = groupDict[groupId];
-                    
-                    // 如果该组没有资源明细，返回 0 (或者视为无限产能？不，应视为 0)
+                    // 如果该组没有资源明细，返回 0
                     if (!resourcesByGroup.ContainsKey(groupId)) return 0;
+
+                    // 获取组效率（如果未定义，默认为 1.0）
+                    double efficiency = 1.0;
+                    if (groupDict.ContainsKey(groupId))
+                    {
+                        efficiency = groupDict[groupId].Efficiency;
+                    }
 
                     double totalCapacity = 0;
                     foreach (var res in resourcesByGroup[groupId])
@@ -349,21 +543,22 @@ namespace APSPlugin
                         totalCapacity += cap;
                     }
 
-                    return totalCapacity * group.Efficiency;
+                    return totalCapacity * efficiency;
                 }
 
                 foreach (var pair in sortedPairs)
                 {
                     var order = pair.Order;
-                    var jo = pair.Result;
+                    var resultJo = pair.Result;
                     
-                    jo[nameof(WorkOrder.SequenceNo)] = sequence++;
+                    resultJo[nameof(WorkOrder.SequenceNo)] = sequence++;
 
                     // 如果未指定资源组或资源组不存在，无法排程
-                    if (string.IsNullOrEmpty(order.ResourceGroupID) || !groupDict.ContainsKey(order.ResourceGroupID))
+                    // 修正逻辑：只要有资源明细，就算有效资源组
+                    if (string.IsNullOrEmpty(order.ResourceGroupID) || !resourcesByGroup.ContainsKey(order.ResourceGroupID))
                     {
-                        jo[nameof(WorkOrder.CapacityStatus)] = "Unknown Resource";
-                        resultList.Add(jo);
+                        string invalidId = string.IsNullOrEmpty(order.ResourceGroupID) ? "(Empty)" : order.ResourceGroupID;
+                        resultJo[nameof(WorkOrder.CapacityStatus)] = $"Unknown Resource: {invalidId}";
                         continue;
                     }
 
@@ -390,87 +585,95 @@ namespace APSPlugin
                         {
                             resourceBuckets[order.ResourceGroupID] = new Dictionary<DateTime, double>();
                         }
-                        var buckets = resourceBuckets[order.ResourceGroupID];
-                        
-                        if (!buckets.ContainsKey(searchDate))
-                        {
-                            buckets[searchDate] = 0;
-                        }
+                        var bucket = resourceBuckets[order.ResourceGroupID];
 
-                        double currentLoad = buckets[searchDate];
-                        
-                        // 策略：L1.5 简化策略 - 只要当天还没满，就尝试放入。
-                        // 如果工单很大，且当天是空的，允许放入（标记 Overloaded）。
-                        // 如果当天已经有负载，且剩余空间不够，顺延。
-                        
-                        if (currentLoad + order.ProcessingTime <= dailyCapacity)
+                        // 计算当天剩余产能
+                        double used = bucket.ContainsKey(searchDate) ? bucket[searchDate] : 0;
+                        double remaining = dailyCapacity - used;
+
+                        if (remaining >= order.ProcessingTime)
                         {
-                            // 完美放入
-                            buckets[searchDate] += order.ProcessingTime;
+                            // 产能足够，安排在今天
+                            bucket[searchDate] = used + order.ProcessingTime;
+                            
                             order.ScheduledDate = searchDate;
-                            order.CapacityStatus = "Normal";
+                            order.CapacityStatus = "Scheduled";
+                            order.IsOverdue = searchDate > order.DueDate;
+                            order.DelayDays = order.IsOverdue ? (searchDate - order.DueDate).TotalDays : 0;
+                            
                             scheduled = true;
                             break;
                         }
-                        else if (currentLoad == 0 && order.ProcessingTime > dailyCapacity)
+                        else if (used == 0 && order.ProcessingTime > dailyCapacity)
                         {
-                            // 工单本身超大，不得不放
-                            buckets[searchDate] += order.ProcessingTime;
+                            // 特殊情况：工单本身耗时超过单日总产能，且当天为空
+                            // 策略：允许强行安排在当天（视为开始日期），实际会跨天，但在 L1.5 模型中简化为占满当天。
+                            bucket[searchDate] = order.ProcessingTime; // 记录实际负载，可能 > dailyCapacity
+
                             order.ScheduledDate = searchDate;
-                            order.CapacityStatus = "Overloaded (Job too large)";
+                            order.CapacityStatus = "Scheduled (Overloaded)";
+                            order.IsOverdue = searchDate > order.DueDate;
+                            order.DelayDays = order.IsOverdue ? (searchDate - order.DueDate).TotalDays : 0;
+
                             scheduled = true;
                             break;
                         }
-
-                        // 否则，顺延至下一天
-                        searchDate = searchDate.AddDays(1);
+                        else
+                        {
+                            // 产能不足，推迟到下一天
+                            searchDate = searchDate.AddDays(1);
+                        }
                     }
 
                     if (!scheduled)
                     {
-                        order.CapacityStatus = "Failed (No Slot)";
-                    }
-                    else
-                    {
-                        // 计算逾期
-                        if (order.ScheduledDate.Value > order.DueDate)
-                        {
-                            order.IsOverdue = true;
-                            order.DelayDays = (order.ScheduledDate.Value - order.DueDate).TotalDays;
-                        }
-                        else
-                        {
-                            order.IsOverdue = false;
-                            order.DelayDays = 0;
-                        }
+                        order.CapacityStatus = "Capacity Overflow";
                     }
 
-                    // 回填结果
-                    jo[nameof(WorkOrder.ScheduledDate)] = order.ScheduledDate;
-                    jo[nameof(WorkOrder.CapacityStatus)] = order.CapacityStatus;
-                    jo[nameof(WorkOrder.IsOverdue)] = order.IsOverdue;
-                    jo[nameof(WorkOrder.DelayDays)] = order.DelayDays;
+                    // 更新结果对象
+                    if (order.ScheduledDate.HasValue)
+                        resultJo[nameof(WorkOrder.ScheduledDate)] = order.ScheduledDate.Value.ToString("yyyy-MM-dd");
                     
-                    resultList.Add(jo);
+                    resultJo[nameof(WorkOrder.CapacityStatus)] = order.CapacityStatus;
+                    resultJo[nameof(WorkOrder.IsOverdue)] = order.IsOverdue;
+                    resultJo[nameof(WorkOrder.DelayDays)] = order.DelayDays;
                 }
 
-                dataContext.Parameters[ResultTo] = resultList;
+                dataContext.Parameters[ResultTo] = orderPairs.Select(p => p.Result).ToList();
                 return new ExecuteResult();
             }
             catch (Exception ex)
             {
-                return new ExecuteResult
-                {
-                    Message = $"排程排序执行失败: {ex.Message}"
-                };
+                Console.WriteLine($"[APSPlugin] [CRITICAL] 发生未处理异常: {ex.Message}\n{ex.StackTrace}");
+                return new ExecuteResult { Message = $"排程执行失败: {ex.Message}" };
             }
+        }
+
+        private DateTime ParseDateTime(object obj, DateTime defaultVal)
+        {
+            if (obj == null) return defaultVal;
+            if (DateTime.TryParse(obj.ToString(), out var dt)) return dt;
+            return defaultVal;
+        }
+
+        private double ParseDouble(object obj, double defaultVal)
+        {
+            if (obj == null) return defaultVal;
+            if (double.TryParse(obj.ToString(), out var d)) return d;
+            return defaultVal;
         }
 
         private T Deserialize<T>(object input)
         {
             if (input == null) return default(T);
-            string json = input is string s ? s : JsonConvert.SerializeObject(input);
-            return JsonConvert.DeserializeObject<T>(json);
+            try
+            {
+                return JsonConvert.DeserializeObject<T>(input.ToString());
+            }
+            catch
+            {
+                return default(T);
+            }
         }
 
         private void UpdateResultField(JObject jo, string externalName, string internalName)
