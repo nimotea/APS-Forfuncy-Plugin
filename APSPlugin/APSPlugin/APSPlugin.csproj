@@ -3,6 +3,7 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>bin\</OutputPath>
+    <AssemblyName>APSPluginAdvanced</AssemblyName>
     <UseWPF>true</UseWPF>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
@@ -55,5 +56,6 @@
   </ItemGroup>
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
     <Exec Command="&quot;..\PackageTools\ForguncyPluginPackageTool.exe&quot; &quot;$(ProjectDir).&quot; &quot;$(ProjectDir)$(OutputPath)$(AssemblyName).dll&quot; $(ConfigurationName)" />
+    <Exec Command="move /Y &quot;$(ProjectDir)$(OutputPath)APSPlugin.zip&quot; &quot;$(ProjectDir)$(OutputPath)$(AssemblyName).zip&quot;" />
   </Target>
 </Project>

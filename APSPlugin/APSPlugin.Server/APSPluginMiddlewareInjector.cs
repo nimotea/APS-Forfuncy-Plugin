@@ -12,7 +12,7 @@ namespace APSPlugin.Server
         {
             serviceItems.Insert(0, new ServiceItem()
             {
-                Id = "a1674470-235e-4295-8903-61c308d166b6",
+                Id = "2cbfd21e-9968-429f-9342-04e5a1f7f773",
                 ConfigureServiceAction = () =>
                 {
                     // 这里可以注册中间件需要的服务，相当于 Asp.net 中的 public void ConfigureServices(IServiceCollection services) 方法
@@ -26,7 +26,7 @@ namespace APSPlugin.Server
         {
             middlewareItems.Insert(0, new MiddlewareItem()
             {
-                Id = "a1674470-235e-4295-8903-61c308d166b6",
+                Id = "2cbfd21e-9968-429f-9342-04e5a1f7f773",
                 ConfigureMiddleWareAction = () =>
                 {
                     app.UseMiddleware<APSPluginMiddleware>();
