@@ -759,7 +759,7 @@ namespace APSPlugin
         public override string ToString()
         {
             var mappingStatus = FieldMappings != null && FieldMappings.Any() ? " (自定义映射)" : "";
-            return $"APS 排程排序: {Rule}{mappingStatus}";
+            return $"APS 高级排程: {Rule}{mappingStatus}";
         }
 
         public override CommandScope GetCommandScope()
