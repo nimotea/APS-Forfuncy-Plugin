@@ -157,10 +157,10 @@ namespace APSPlugin
         public double DelayDays { get; set; }
     }
 
-    [Icon("pack://application:,,,/APSPlugin;component/Resources/Icon.png")]
-    [Designer("APSPlugin.Designer.APSPluginServerCommandDesigner, APSPlugin")]
-    [DisplayName("APS 粗能力排程 (L1.5)")]
-    [Description("执行宏观产能平衡排程。支持资源组负荷计算、自动顺延与逾期预警。")]
+    [Icon("pack://application:,,,/APSPluginAdvanced;component/Resources/Icon.png")]
+    [Designer("APSPlugin.Designer.APSPluginServerCommandDesigner, APSPluginAdvanced")]
+    [DisplayName("APS 高级排程 (L1.5)")]
+    [Description("执行高级宏观产能平衡排程。支持资源组负荷计算、自动顺延与逾期预警。")]
     public class APSPluginServerCommand : Command, ICommandExecutableInServerSideAsync, IServerCommandParamGenerator
     {
         [FormulaProperty]
