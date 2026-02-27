@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "forguncy-plugin-expert": {
+      "source": "nimotea/forguncy-plugin-skill-publish",
+      "sourceType": "github",
+      "computedHash": "b5bc64ca9d722cd83cade1c241fecbb2472542a52b7e4712b6213a53d58117a9"
+    }
+  }
+}

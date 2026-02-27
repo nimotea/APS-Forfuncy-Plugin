@@ -8,7 +8,7 @@
   "name": "APS 排程排序插件",
   "pluginType": "command",
   "guid": "a1674470-235e-4295-8903-61c308d166b6",
-  "version": "1.0.0.0",
+  "version": "1.0.1.0",
   "dependenceVersion": "11.0.103.0",
   "bundleJavaScript": true,
   "bundleCSS": true

@@ -53,6 +53,17 @@ namespace APSPlugin
         }
     }
 
+    public class SortRuleItem : ObjectPropertyBase
+    {
+        [DisplayName("排序规则")]
+        public SchedulingRule Rule { get; set; }
+
+        public override string ToString()
+        {
+            return Rule.ToString();
+        }
+    }
+
     public class WorkOrder
     {
         public string OrderID { get; set; }
@@ -79,9 +90,10 @@ namespace APSPlugin
         [Description("配置输入数据中的字段名称映射。如果未配置，将尝试匹配默认名称（如“工单号”、“加工时长”等）。")]
         public List<FieldMappingItem> FieldMappings { get; set; } = new List<FieldMappingItem>();
 
-        [DisplayName("排序规则")]
-        [Description("选择用于排序的 APS 算法。")]
-        public SchedulingRule Rule { get; set; } = SchedulingRule.EDD;
+        [ListProperty]
+        [DisplayName("排序规则配置")]
+        [Description("定义多级排序规则（例如：先按 EDD 排序，交期相同时按 SPT 排序）。")]
+        public List<SortRuleItem> SortRules { get; set; } = new List<SortRuleItem>();
 
         [ResultToProperty]
         [DisplayName("将结果保存到变量")]
@@ -198,41 +210,88 @@ namespace APSPlugin
                 }
 
                 // 4. 执行规则校验
-                string validationError = ValidateData(orderPairs.Select(p => p.Order).ToList(), Rule);
-                if (!string.IsNullOrEmpty(validationError))
+                if (SortRules == null || !SortRules.Any())
                 {
-                    return new ExecuteResult { Message = validationError };
+                    // 默认使用 EDD
+                    SortRules = new List<SortRuleItem> { new SortRuleItem { Rule = SchedulingRule.EDD } };
                 }
 
-                // 5. 执行排序逻辑
-                IEnumerable<(WorkOrder Order, JObject Result)> sortedPairs;
-                switch (Rule)
+                foreach (var ruleItem in SortRules)
                 {
-                    case SchedulingRule.EDD:
-                        sortedPairs = orderPairs.OrderBy(p => p.Order.DueDate);
-                        break;
-                    case SchedulingRule.SPT:
-                        sortedPairs = orderPairs.OrderBy(p => p.Order.ProcessingTime);
-                        break;
-                    case SchedulingRule.WSPT:
-                        sortedPairs = orderPairs.OrderByDescending(p => p.Order.ProcessingTime == 0 ? 0 : p.Order.Priority / p.Order.ProcessingTime);
-                        break;
-                    case SchedulingRule.CR:
-                        var now = DateTime.Now;
-                        sortedPairs = orderPairs.OrderBy(p =>
-                        {
-                            var remainingTime = (p.Order.DueDate - now).TotalHours;
-                            return p.Order.ProcessingTime == 0 ? double.MaxValue : remainingTime / p.Order.ProcessingTime;
-                        });
-                        break;
-                    case SchedulingRule.FIFO:
-                        // 先来先服务，按到达时间排序
-                        sortedPairs = orderPairs.OrderBy(p => p.Order.ArrivalTime);
-                        break;
-                    default:
-                        sortedPairs = orderPairs;
-                        break;
+                    string validationError = ValidateData(orderPairs.Select(p => p.Order).ToList(), ruleItem.Rule);
+                    if (!string.IsNullOrEmpty(validationError))
+                    {
+                        return new ExecuteResult { Message = validationError };
+                    }
                 }
+
+                // 5. 执行多级排序逻辑
+                IOrderedEnumerable<(WorkOrder Order, JObject Result)> sortedQuery = null;
+                var now = DateTime.Now;
+
+                for (int i = 0; i < SortRules.Count; i++)
+                {
+                    var rule = SortRules[i].Rule;
+                    if (i == 0)
+                    {
+                        // 第一级排序
+                        switch (rule)
+                        {
+                            case SchedulingRule.EDD:
+                                sortedQuery = orderPairs.OrderBy(p => p.Order.DueDate);
+                                break;
+                            case SchedulingRule.SPT:
+                                sortedQuery = orderPairs.OrderBy(p => p.Order.ProcessingTime);
+                                break;
+                            case SchedulingRule.WSPT:
+                                sortedQuery = orderPairs.OrderByDescending(p => p.Order.ProcessingTime == 0 ? 0 : p.Order.Priority / p.Order.ProcessingTime);
+                                break;
+                            case SchedulingRule.CR:
+                                sortedQuery = orderPairs.OrderBy(p =>
+                                {
+                                    var remainingTime = (p.Order.DueDate - now).TotalHours;
+                                    return p.Order.ProcessingTime == 0 ? double.MaxValue : remainingTime / p.Order.ProcessingTime;
+                                });
+                                break;
+                            case SchedulingRule.FIFO:
+                                sortedQuery = orderPairs.OrderBy(p => p.Order.ArrivalTime);
+                                break;
+                            default:
+                                sortedQuery = orderPairs.OrderBy(p => p.Order.SequenceNo); // 默认保持原序 (SequenceNo 还未生成，其实是原列表顺序)
+                                break;
+                        }
+                    }
+                    else
+                    {
+                        // 后续级排序 (Tie-breaking)
+                        if (sortedQuery == null) continue; // Should not happen
+
+                        switch (rule)
+                        {
+                            case SchedulingRule.EDD:
+                                sortedQuery = sortedQuery.ThenBy(p => p.Order.DueDate);
+                                break;
+                            case SchedulingRule.SPT:
+                                sortedQuery = sortedQuery.ThenBy(p => p.Order.ProcessingTime);
+                                break;
+                            case SchedulingRule.WSPT:
+                                sortedQuery = sortedQuery.ThenByDescending(p => p.Order.ProcessingTime == 0 ? 0 : p.Order.Priority / p.Order.ProcessingTime);
+                                break;
+                            case SchedulingRule.CR:
+                                sortedQuery = sortedQuery.ThenBy(p =>
+                                {
+                                    var remainingTime = (p.Order.DueDate - now).TotalHours;
+                                    return p.Order.ProcessingTime == 0 ? double.MaxValue : remainingTime / p.Order.ProcessingTime;
+                                });
+                                break;
+                            case SchedulingRule.FIFO:
+                                sortedQuery = sortedQuery.ThenBy(p => p.Order.ArrivalTime);
+                                break;
+                        }
+                    }
+                }
+
+                var sortedPairs = sortedQuery != null ? sortedQuery.ToList() : orderPairs;
 
                 // 6. 返回结果（返回标准化 key 后的 JObject，同时保留了其他非映射字段）
                 var resultList = new List<JObject>();
@@ -338,8 +397,11 @@ namespace APSPlugin
 
         public override string ToString()
         {
+            var rulesStr = SortRules != null && SortRules.Any() 
+                ? string.Join(" -> ", SortRules.Select(r => r.Rule)) 
+                : "EDD (Default)";
             var mappingStatus = FieldMappings != null && FieldMappings.Any() ? " (自定义映射)" : "";
-            return $"APS 排程排序: {Rule}{mappingStatus}";
+            return $"APS 排程排序: {rulesStr}{mappingStatus}";
         }
 
         public override CommandScope GetCommandScope()
