@@ -26,3 +26,6 @@ Thumbs.db
 # Documentation not for repo
 plans/
 require.md
+
+# Agents
+.agents/
