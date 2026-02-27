@@ -11,7 +11,7 @@
 .vscode/
 .idea/
 .trae/
-.agent/
+.agents/
 
 # OS specific
 .DS_Store
